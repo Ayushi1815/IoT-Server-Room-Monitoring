@@ -1,0 +1,208 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <DHT.h>
+
+// ================= OLED =================
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET -1
+#define OLED_ADDRESS 0x3C
+
+Adafruit_SSD1306 display(
+  SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET
+);
+
+// ================= ESP32 PINS =================
+const int MQ2_PIN = 34;
+const int DHT_PIN = 4;
+const int DOOR_PIN = 27;
+const int PIR_PIN = 26;
+const int BUZZER_PIN = 18;
+const int RED_LED_PIN = 19;
+const int RELAY_PIN = 25;
+
+// ================= SENSORS =================
+#define DHT_TYPE DHT11
+DHT dht(DHT_PIN, DHT_TYPE);
+
+// Demonstration thresholds only; calibrate before use.
+const int GAS_THRESHOLD = 1800;
+const float TEMP_THRESHOLD = 35.0;
+
+// Change these after testing your hardware.
+const bool DOOR_OPEN_IS_HIGH = true;
+const bool BUZZER_ACTIVE_HIGH = true;
+const bool RELAY_ACTIVE_LOW = true;
+
+// ================= SETUP =================
+void setup() {
+  Serial.begin(115200);
+
+  pinMode(DOOR_PIN, INPUT_PULLUP);
+  pinMode(PIR_PIN, INPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(RED_LED_PIN, OUTPUT);
+  pinMode(RELAY_PIN, OUTPUT);
+
+  digitalWrite(BUZZER_PIN, LOW);
+  digitalWrite(RED_LED_PIN, LOW);
+
+  // Relay OFF at startup
+  digitalWrite(RELAY_PIN, RELAY_ACTIVE_LOW ? HIGH : LOW);
+
+  // OLED I2C pins
+  Wire.begin(21, 22);
+
+  // Start DHT11
+  dht.begin();
+
+  // Start OLED
+  if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS)) {
+    Serial.println("OLED not detected. Check wiring/address.");
+  } else {
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+    display.setTextSize(1);
+    display.setCursor(0, 0);
+    display.println("SERVER ROOM");
+    display.println("MONITORING SYSTEM");
+    display.println("Initializing...");
+    display.display();
+  }
+
+  Serial.println("Server Room Monitoring Started");
+  delay(3000);
+}
+
+// ================= MAIN LOOP =================
+void loop() {
+  // Read all sensors
+  int gasValue = analogRead(MQ2_PIN);
+  int doorValue = digitalRead(DOOR_PIN);
+  int pirValue = digitalRead(PIR_PIN);
+
+  float temperature = dht.readTemperature();
+  float humidity = dht.readHumidity();
+
+  // Interpret readings
+  bool doorOpen = DOOR_OPEN_IS_HIGH
+                    ? (doorValue == HIGH)
+                    : (doorValue == LOW);
+
+  bool motionDetected = (pirValue == HIGH);
+  bool gasAlarm = (gasValue >= GAS_THRESHOLD);
+
+  bool tempValid = !isnan(temperature);
+  bool humidityValid = !isnan(humidity);
+
+  bool tempAlarm = tempValid &&
+                   (temperature >= TEMP_THRESHOLD);
+
+  // Alarm conditions
+  bool alarm = gasAlarm ||
+               doorOpen ||
+               motionDetected ||
+               tempAlarm;
+
+  // Red LED
+  digitalWrite(RED_LED_PIN, alarm ? HIGH : LOW);
+
+  // Buzzer
+  digitalWrite(
+    BUZZER_PIN,
+    alarm
+      ? (BUZZER_ACTIVE_HIGH ? HIGH : LOW)
+      : (BUZZER_ACTIVE_HIGH ? LOW : HIGH)
+  );
+
+  // Fan control: temperature-based only.
+  // Assumes an active-low relay module.
+  // Do not use ventilation as an automatic fire response.
+  bool fanOn = tempAlarm;
+
+  digitalWrite(
+    RELAY_PIN,
+    fanOn
+      ? (RELAY_ACTIVE_LOW ? LOW : HIGH)
+      : (RELAY_ACTIVE_LOW ? HIGH : LOW)
+  );
+
+  // ================= SERIAL MONITOR =================
+  Serial.println("\n--- SERVER ROOM STATUS ---");
+
+  Serial.print("MQ-2: ");
+  Serial.println(gasValue);
+
+  Serial.print("Door: ");
+  Serial.println(doorOpen ? "OPEN" : "CLOSED");
+
+  Serial.print("Motion: ");
+  Serial.println(motionDetected ? "DETECTED" : "NONE");
+
+  Serial.print("Temperature: ");
+  if (tempValid) {
+    Serial.print(temperature, 1);
+    Serial.println(" C");
+  } else {
+    Serial.println("DHT11 ERROR");
+  }
+
+  Serial.print("Humidity: ");
+  if (humidityValid) {
+    Serial.print(humidity, 1);
+    Serial.println(" %");
+  } else {
+    Serial.println("DHT11 ERROR");
+  }
+
+  Serial.print("Fan: ");
+  Serial.println(fanOn ? "ON" : "OFF");
+
+  Serial.print("Overall status: ");
+  Serial.println(alarm ? "ALERT" : "NORMAL");
+
+  // ================= OLED DISPLAY =================
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+
+  display.println("SERVER ROOM MONITOR");
+  display.println("--------------------");
+
+  display.print("Gas: ");
+  display.println(gasValue);
+
+  display.print("Door: ");
+  display.println(doorOpen ? "OPEN" : "CLOSED");
+
+  display.print("Motion: ");
+  display.println(motionDetected ? "YES" : "NO");
+
+  display.print("Temp: ");
+  if (tempValid) {
+    display.print(temperature, 1);
+    display.println(" C");
+  } else {
+    display.println("ERROR");
+  }
+
+  display.print("Humidity: ");
+  if (humidityValid) {
+    display.print(humidity, 1);
+    display.println(" %");
+  } else {
+    display.println("ERROR");
+  }
+
+  display.print("Fan: ");
+  display.println(fanOn ? "ON" : "OFF");
+
+  display.print("Status: ");
+  display.println(alarm ? "ALERT!" : "NORMAL");
+
+  display.display();
+
+  delay(1000);
+}
